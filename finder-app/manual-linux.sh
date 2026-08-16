@@ -11,14 +11,14 @@ KERNEL_VERSION=v5.15.163
 BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
-CROSS_COMPILE=aarch64-linux-gnu-
+CROSS_COMPILE=${CROSS_COMPILE:-aarch64-none-linux-gnu-}
 
 if [ $# -lt 1 ]
 then
-	echo "Using default directory ${OUTDIR} for output"
+    echo "Using default directory ${OUTDIR} for output"
 else
-	OUTDIR=$1
-	echo "Using passed directory ${OUTDIR} for output"
+    OUTDIR=$1
+    echo "Using passed directory ${OUTDIR} for output"
 fi
 
 mkdir -p ${OUTDIR}
@@ -26,16 +26,14 @@ mkdir -p ${OUTDIR}
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/linux-stable" ]; then
     #Clone only if the repository does not exist.
-	echo "CLONING GIT LINUX STABLE VERSION ${KERNEL_VERSION} IN ${OUTDIR}"
-	git clone ${KERNEL_REPO} --depth 1 --single-branch --branch ${KERNEL_VERSION} linux-stable
+    echo "CLONING GIT LINUX STABLE VERSION ${KERNEL_VERSION} IN ${OUTDIR}"
+    git clone ${KERNEL_REPO} --depth 1 --single-branch --branch ${KERNEL_VERSION} linux-stable
 fi
 if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     cd ${OUTDIR}/linux-stable
     echo "Checking out version ${KERNEL_VERSION}"
-    #git checkout ${KERNEL_VERSION}
 
-    # TODO: Add your kernel build steps here
-   # make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
     make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
     make -j$(nproc) ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
     make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs
@@ -49,30 +47,29 @@ echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
 if [ -d "${OUTDIR}/rootfs" ]
 then
-	echo "Deleting rootfs directory at ${OUTDIR}/rootfs and starting over"
-    sudo rm  -rf ${OUTDIR}/rootfs
+    echo "Deleting rootfs directory at ${OUTDIR}/rootfs and starting over"
+    sudo rm -rf ${OUTDIR}/rootfs
 fi
 
-# TODO: Create necessary base directories
-	mkdir -p ${OUTDIR}/rootfs
-	cd ${OUTDIR}/rootfs
-	mkdir -p bin dev etc home lib lib64 proc sys sbin tmp usr var
-	mkdir -p usr/bin usr/sbin usr/lib var/log
+# Create necessary base directories
+mkdir -p ${OUTDIR}/rootfs
+cd ${OUTDIR}/rootfs
+mkdir -p bin dev etc home lib lib64 proc sys sbin tmp usr var
+mkdir -p usr/bin usr/sbin usr/lib var/log
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-git clone git://busybox.net/busybox.git
+    git clone git://busybox.net/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
-    # TODO:  Configure busybox
     make distclean
     make defconfig
 else
     cd busybox
 fi
 
-# TODO: Make and install busybox
+# Make and install busybox
 make -j$(nproc) ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
 make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} CONFIG_PREFIX=${OUTDIR}/rootfs install
 
@@ -80,56 +77,49 @@ echo "Library dependencies"
 ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
-# TODO: Add library dependencies to rootfs
+# Add library dependencies to rootfs
 mkdir -p ${OUTDIR}/rootfs/lib ${OUTDIR}/rootfs/lib64
 
-SYSROOT=$(aarch64-linux-gnu-gcc -print-sysroot)
-if [ -z "$SYSROOT" ]; then
-    SYSROOT="/usr/aarch64-linux-gnu"
-fi
+SYSROOT=$(${CROSS_COMPILE}gcc -print-sysroot)
 
 # Copy Interpreter to /lib and /lib64
-cp ${SYSROOT}/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib/ 2>/dev/null || cp /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib/
-cp ${SYSROOT}/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib64/ 2>/dev/null || cp /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib64/
+cp ${SYSROOT}/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib/ 2>/dev/null || true
+cp ${SYSROOT}/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib64/ 2>/dev/null || true
 
 # Copy Libraries to /lib and /lib64
 for lib in libm.so.6 libresolv.so.2 libc.so.6; do
-    cp ${SYSROOT}/lib/$lib ${OUTDIR}/rootfs/lib/ 2>/dev/null || cp /usr/aarch64-linux-gnu/lib/$lib ${OUTDIR}/rootfs/lib/
-    cp ${SYSROOT}/lib/$lib ${OUTDIR}/rootfs/lib64/ 2>/dev/null || cp /usr/aarch64-linux-gnu/lib/$lib ${OUTDIR}/rootfs/lib64/
+    cp ${SYSROOT}/lib64/$lib ${OUTDIR}/rootfs/lib64/ 2>/dev/null || cp ${SYSROOT}/lib/$lib ${OUTDIR}/rootfs/lib/ 2>/dev/null || true
 done
 
-# TODO: Make device nodes
+# Make device nodes
 cd ${OUTDIR}/rootfs
 sudo mknod -m 666 dev/null c 1 3
 sudo mknod -m 600 dev/console c 5 1
 
-# TODO: Clean and build the writer utility
+# Clean and build the writer utility
 cd ${FINDER_APP_DIR}
 make clean
 make CROSS_COMPILE=${CROSS_COMPILE}
-# TODO:# Copy finder related scripts and executables to the /home directory
+
+# Copy finder related scripts and executables
 cp writer ${OUTDIR}/rootfs/home/
 cp finder.sh ${OUTDIR}/rootfs/home/
 cp finder-test.sh ${OUTDIR}/rootfs/home/
 cp autorun-qemu.sh ${OUTDIR}/rootfs/home/
 
-# Copy the entire conf directory properly
 mkdir -p ${OUTDIR}/rootfs/home/conf
 cp -a conf/* ${OUTDIR}/rootfs/home/conf/
-# Also copy conf to rootfs/conf just in case finder-test checks parent path
 mkdir -p ${OUTDIR}/rootfs/conf
 cp -a conf/* ${OUTDIR}/rootfs/conf/
 
-# Ensure execution permissions for all scripts
 chmod +x ${OUTDIR}/rootfs/home/*.sh
 chmod +x ${OUTDIR}/rootfs/home/writer
 
 sed -i 's|\.\./conf/assignment.txt|conf/assignment.txt|g' ${OUTDIR}/rootfs/home/finder-test.sh
-# TODO: Chown the root directory
+
+# Chown the root directory and create initramfs
 cd ${OUTDIR}/rootfs
 sudo chown -R root:root *
-# TODO: Create initramfs.cpio.gz
-cd ${OUTDIR}/rootfs
 find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
 cd ${OUTDIR}
 gzip -f initramfs.cpio
